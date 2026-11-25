@@ -1,0 +1,6 @@
+{
+  "name": "SIMKAH-Desk KUA Batealit",
+  "description": "Sistem Pemberkasan Nikah Digital (N1, N2, N4, N5, SPTJM, Surat Kuasa, Surat Pernyataan Belum Pernah Menikah) format F4 untuk 11 Desa di KUA Kecamatan Batealit, Kabupaten Jepara.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
