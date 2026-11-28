@@ -3,15 +3,83 @@ import type {
   MarriageFilingRecord,
   UserProfile,
 } from '../types/marriage';
+import { localBackend } from './localBackend';
+
+export type BackendMode = 'server' | 'standalone';
 
 export interface AuthStatusResponse {
   needsSetup: boolean;
   envAdminActive: boolean;
   villageCount: number;
+  backendMode?: BackendMode;
+}
+
+function getApiBaseUrl(): string {
+  try {
+    const raw = (import.meta as { env?: Record<string, string | undefined> }).env
+      ?.VITE_API_BASE_URL;
+    if (raw && raw.trim()) {
+      return raw.trim().replace(/\/+$/, '');
+    }
+  } catch {
+    // Node test environment without Vite import.meta.env
+  }
+  return '';
+}
+
+let activeBackendMode: BackendMode | null = null;
+
+export function getActiveBackendMode(): BackendMode | null {
+  return activeBackendMode;
+}
+
+export function resetBackendModeForTest(): void {
+  activeBackendMode = null;
+}
+
+/**
+ * Pure helper to determine whether a /api/auth/status HTTP probe indicates
+ * a live Express API server or a static/Vercel environment that should run
+ * in standalone browser persistence mode.
+ */
+export function interpretAuthStatusProbe(
+  status: number,
+  contentType: string | null,
+  body: unknown,
+): { mode: BackendMode; serverStatus?: AuthStatusResponse } {
+  const isJson = Boolean(contentType && contentType.toLowerCase().includes('application/json'));
+  if (!isJson || status === 404 || status === 405 || status >= 500) {
+    return { mode: 'standalone' };
+  }
+
+  if (body && typeof body === 'object') {
+    const record = body as Record<string, unknown>;
+    if (record.backendMode === 'standalone') {
+      return { mode: 'standalone' };
+    }
+    if (
+      status >= 200 &&
+      status < 300 &&
+      typeof record.needsSetup === 'boolean' &&
+      typeof record.villageCount === 'number'
+    ) {
+      return {
+        mode: 'server',
+        serverStatus: {
+          needsSetup: record.needsSetup,
+          envAdminActive: Boolean(record.envAdminActive),
+          villageCount: record.villageCount,
+          backendMode: 'server',
+        },
+      };
+    }
+  }
+
+  return { mode: 'standalone' };
 }
 
 async function apiFetch<T>(
-  url: string,
+  path: string,
   token: string | null,
   init?: RequestInit,
 ): Promise<T> {
@@ -22,7 +90,8 @@ async function apiFetch<T>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       ...headers,
@@ -37,25 +106,61 @@ async function apiFetch<T>(
   return data as T;
 }
 
+async function probeAuthStatus(): Promise<AuthStatusResponse> {
+  const baseUrl = getApiBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/auth/status`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    const contentType = res.headers.get('content-type');
+    let parsed: unknown = null;
+    if (contentType && contentType.toLowerCase().includes('application/json')) {
+      parsed = await res.json().catch(() => null);
+    }
+
+    const interpreted = interpretAuthStatusProbe(res.status, contentType, parsed);
+    activeBackendMode = interpreted.mode;
+    if (interpreted.mode === 'server' && interpreted.serverStatus) {
+      return interpreted.serverStatus;
+    }
+    return localBackend.getAuthStatus();
+  } catch {
+    // If an explicit remote API URL is unreachable or same-origin static host fails,
+    // fall back gracefully to standalone browser persistence so the app remains usable.
+    activeBackendMode = 'standalone';
+    return localBackend.getAuthStatus();
+  }
+}
+
 export const api = {
-  getAuthStatus: () => apiFetch<AuthStatusResponse>('/api/auth/status', null),
+  getAuthStatus: () => probeAuthStatus(),
 
   setupAdmin: (adminPassword: string, villageDefaultPassword: string) =>
-    apiFetch<{ token: string; user: UserProfile }>('/api/auth/setup', null, {
-      method: 'POST',
-      body: JSON.stringify({ adminPassword, villageDefaultPassword }),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.setupAdmin(adminPassword, villageDefaultPassword)
+      : apiFetch<{ token: string; user: UserProfile }>('/api/auth/setup', null, {
+          method: 'POST',
+          body: JSON.stringify({ adminPassword, villageDefaultPassword }),
+        }),
 
   login: (username: string, password: string) =>
-    apiFetch<{ token: string; user: UserProfile }>('/api/auth/login', null, {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.login(username, password)
+      : apiFetch<{ token: string; user: UserProfile }>('/api/auth/login', null, {
+          method: 'POST',
+          body: JSON.stringify({ username, password }),
+        }),
 
-  me: (token: string) => apiFetch<{ user: UserProfile }>('/api/auth/me', token),
+  me: (token: string) =>
+    activeBackendMode === 'standalone'
+      ? localBackend.me(token)
+      : apiFetch<{ user: UserProfile }>('/api/auth/me', token),
 
   logout: (token: string) =>
-    apiFetch<{ ok: boolean }>('/api/auth/logout', token, { method: 'POST' }),
+    activeBackendMode === 'standalone'
+      ? localBackend.logout(token)
+      : apiFetch<{ ok: boolean }>('/api/auth/logout', token, { method: 'POST' }),
 
   updateProfile: (
     token: string,
@@ -72,13 +177,17 @@ export const api = {
       newPassword?: string;
     },
   ) =>
-    apiFetch<{ user: UserProfile }>('/api/profile', token, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.updateProfile(token, payload)
+      : apiFetch<{ user: UserProfile }>('/api/profile', token, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        }),
 
   getVillageUsers: (token: string) =>
-    apiFetch<{ users: UserProfile[] }>('/api/users', token),
+    activeBackendMode === 'standalone'
+      ? localBackend.getVillageUsers(token)
+      : apiFetch<{ users: UserProfile[] }>('/api/users', token),
 
   createVillageUser: (
     token: string,
@@ -95,10 +204,12 @@ export const api = {
       alamatKantor: string;
     },
   ) =>
-    apiFetch<{ user: UserProfile }>('/api/users', token, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.createVillageUser(token, payload)
+      : apiFetch<{ user: UserProfile }>('/api/users', token, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
 
   updateVillageUser: (
     token: string,
@@ -117,13 +228,17 @@ export const api = {
       isActive: boolean;
     }>,
   ) =>
-    apiFetch<{ user: UserProfile }>(`/api/users/${id}`, token, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.updateVillageUser(token, id, payload)
+      : apiFetch<{ user: UserProfile }>(`/api/users/${id}`, token, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        }),
 
   deleteVillageUser: (token: string, id: number) =>
-    apiFetch<{ ok: boolean }>(`/api/users/${id}`, token, { method: 'DELETE' }),
+    activeBackendMode === 'standalone'
+      ? localBackend.deleteVillageUser(token, id)
+      : apiFetch<{ ok: boolean }>(`/api/users/${id}`, token, { method: 'DELETE' }),
 
   getFilings: (
     token: string,
@@ -135,6 +250,9 @@ export const api = {
       status?: string;
     },
   ) => {
+    if (activeBackendMode === 'standalone') {
+      return localBackend.getFilings(token, filters);
+    }
     const params = new URLSearchParams();
     if (filters?.search) params.set('search', filters.search);
     if (filters?.desa && filters.desa !== 'all') params.set('desa', filters.desa);
@@ -153,10 +271,12 @@ export const api = {
     payload: MarriageFilingForm,
     statusBerkas: 'Lengkap' | 'Draft' = 'Lengkap',
   ) =>
-    apiFetch<{ filing: MarriageFilingRecord }>('/api/filings', token, {
-      method: 'POST',
-      body: JSON.stringify({ payload, statusBerkas }),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.createFiling(token, payload, statusBerkas)
+      : apiFetch<{ filing: MarriageFilingRecord }>('/api/filings', token, {
+          method: 'POST',
+          body: JSON.stringify({ payload, statusBerkas }),
+        }),
 
   updateFiling: (
     token: string,
@@ -164,11 +284,15 @@ export const api = {
     payload: MarriageFilingForm,
     statusBerkas: 'Lengkap' | 'Draft' = 'Lengkap',
   ) =>
-    apiFetch<{ filing: MarriageFilingRecord }>(`/api/filings/${id}`, token, {
-      method: 'PUT',
-      body: JSON.stringify({ payload, statusBerkas }),
-    }),
+    activeBackendMode === 'standalone'
+      ? localBackend.updateFiling(token, id, payload, statusBerkas)
+      : apiFetch<{ filing: MarriageFilingRecord }>(`/api/filings/${id}`, token, {
+          method: 'PUT',
+          body: JSON.stringify({ payload, statusBerkas }),
+        }),
 
   deleteFiling: (token: string, id: number) =>
-    apiFetch<{ ok: boolean }>(`/api/filings/${id}`, token, { method: 'DELETE' }),
+    activeBackendMode === 'standalone'
+      ? localBackend.deleteFiling(token, id)
+      : apiFetch<{ ok: boolean }>(`/api/filings/${id}`, token, { method: 'DELETE' }),
 };

@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { BATEALIT_VILLAGES } from '../data/regions.ts';
+import { DEFAULT_VILLAGE_SEEDS } from '../data/seeds.ts';
 import { createDemoFilingForm } from '../utils/formatting.ts';
 import type {
   MarriageFilingForm,
@@ -11,14 +13,13 @@ import type {
   UserRole,
 } from '../types/marriage.ts';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+const DEFAULT_DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'simpel-kua-batealit')
+  : path.resolve(process.cwd(), 'data');
 
 const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
-  : path.join(DATA_DIR, 'kua_batealit.db');
+  : path.join(DEFAULT_DATA_DIR, 'kua_batealit.db');
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
@@ -137,106 +138,7 @@ export function mapFilingRow(row: RawFilingRow): MarriageFilingRecord {
   };
 }
 
-const DEFAULT_VILLAGE_SEEDS: Record<
-  string,
-  {
-    username: string;
-    namaPetinggi: string;
-    gelarDepan: string;
-    gelarBelakang: string;
-    nip: string;
-    kepalaLingkungan: string;
-  }
-> = {
-  Bantrung: {
-    username: 'desa_bantrung',
-    namaPetinggi: 'Ahmad Shodiq',
-    gelarDepan: 'H.',
-    gelarBelakang: 'S.H.',
-    nip: '',
-    kepalaLingkungan: 'Kasmani',
-  },
-  Batealit: {
-    username: 'desa_batealit',
-    namaPetinggi: 'Muhammad Noor',
-    gelarDepan: '',
-    gelarBelakang: 'S.Pd.',
-    nip: '',
-    kepalaLingkungan: 'Subiyanto',
-  },
-  Bawu: {
-    username: 'desa_bawu',
-    namaPetinggi: 'Kuzaeni',
-    gelarDepan: 'H.',
-    gelarBelakang: 'S.Ag.',
-    nip: '',
-    kepalaLingkungan: 'Supriyadi',
-  },
-  Bringin: {
-    username: 'desa_bringin',
-    namaPetinggi: 'Sunarto',
-    gelarDepan: '',
-    gelarBelakang: 'S.E.',
-    nip: '',
-    kepalaLingkungan: 'Karsono',
-  },
-  Geneng: {
-    username: 'desa_geneng',
-    namaPetinggi: 'Mustain',
-    gelarDepan: '',
-    gelarBelakang: 'S.H.',
-    nip: '',
-    kepalaLingkungan: 'Sukirno',
-  },
-  Mindahan: {
-    username: 'desa_mindahan',
-    namaPetinggi: 'Abdul Wahid',
-    gelarDepan: 'H.',
-    gelarBelakang: 'S.Pd.I.',
-    nip: '',
-    kepalaLingkungan: 'Darmaji',
-  },
-  'Mindahan Kidul': {
-    username: 'desa_mindahankidul',
-    namaPetinggi: 'Suyanto',
-    gelarDepan: '',
-    gelarBelakang: 'S.Sos.',
-    nip: '',
-    kepalaLingkungan: 'Slamet Riyadi',
-  },
-  Ngasem: {
-    username: 'desa_ngasem',
-    namaPetinggi: 'Mulyono',
-    gelarDepan: '',
-    gelarBelakang: 'S.H.',
-    nip: '',
-    kepalaLingkungan: 'Wahyudi',
-  },
-  Pekalongan: {
-    username: 'desa_pekalongan',
-    namaPetinggi: 'Nur Kholis',
-    gelarDepan: 'H.',
-    gelarBelakang: 'S.Ag.',
-    nip: '',
-    kepalaLingkungan: 'Sutrisno',
-  },
-  Raguklampitan: {
-    username: 'desa_raguklampitan',
-    namaPetinggi: 'Budi Santoso',
-    gelarDepan: '',
-    gelarBelakang: 'S.E.',
-    nip: '',
-    kepalaLingkungan: 'Haryanto',
-  },
-  Somosari: {
-    username: 'desa_somosari',
-    namaPetinggi: 'Syaiful Anwar',
-    gelarDepan: '',
-    gelarBelakang: 'S.Pd.',
-    nip: '',
-    kepalaLingkungan: 'Joko Susilo',
-  },
-};
+
 
 export function initDatabase(): void {
   db.exec(`

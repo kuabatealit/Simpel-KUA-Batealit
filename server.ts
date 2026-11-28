@@ -99,6 +99,30 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
 
+  // Optional allowlist-based CORS for cross-origin Vercel frontends connecting to this API
+  const allowedOrigins = new Set(
+    String(process.env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim().replace(/\/+$/, ''))
+      .filter(Boolean),
+  );
+  if (allowedOrigins.size > 0) {
+    app.use('/api', (req, res, next) => {
+      const requestOrigin = String(req.headers.origin || '').replace(/\/+$/, '');
+      if (requestOrigin && allowedOrigins.has(requestOrigin)) {
+        res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      }
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+      next();
+    });
+  }
+
   // Auth status (safe public info without exposing usernames)
   app.get('/api/auth/status', (_req, res) => {
     const envAdminActive = Boolean(process.env.KUA_ADMIN_PASSWORD?.trim());
@@ -111,6 +135,7 @@ async function startServer() {
       needsSetup: !initialized && !envAdminActive,
       envAdminActive,
       villageCount: countRow.c,
+      backendMode: 'server',
     });
   });
 
